@@ -24,19 +24,34 @@ hysteria 依赖 `feeds/packages` 里的 `lang/golang`，这一步不能跳。
 
 ### 2. 清掉同名包
 
-`feeds install` 生成的 `package/feeds/<feed>/<pkg>` 是软链，里面已经有 `hysteria`（passwall feed 的 v2）和 `shadowsocks-c`。不删的话，`make` 会因为包名重复直接报错。
+`feeds install` 生成的 `package/feeds/<feed>/<pkg>` 是软链。要清的是三类目录：
+
+| 目录名 | 来源 | 冲突原因 |
+|---|---|---|
+| `hysteria` | passwall-packages feed | 同名包 `hysteria`（v1 1.3.5） |
+| `shadowsocks-libev` | passwall-packages feed（**旧版**） | 子包名 `shadowsocks-libev-ss-*` 重复 |
+| `shadowsocks-c` | passwall-packages feed（**新版**） | 同上，子包名不变 |
+
+**ss 的目录名取决于 feed 版本**：`openwrt-passwall-packages` 在提交 `e315f03` 里把 `shadowsocks-libev/` 删掉换成了 `shadowsocks-c/`。早于这个提交的树是 `shadowsocks-libev`，之后是 `shadowsocks-c`。
+
+真正冲突的不是目录名，是**子包名**——我们的 `shadowsocks-c` 故意沿用 `shadowsocks-libev-ss-local` / `ss-redir` / `ss-server`，所以不管目录叫哪个，两边定义的是同一批包，`make` 会报重复。
 
 先看一眼在哪：
 
 ```sh
-find package/feeds -maxdepth 3 \( -name hysteria -o -name shadowsocks-c \) -print
+find package/feeds -maxdepth 3 \
+  \( -name hysteria -o -name shadowsocks-libev -o -name shadowsocks-c \) -print
 ```
 
 确认无误后删掉：
 
 ```sh
-find package/feeds -maxdepth 3 \( -name hysteria -o -name shadowsocks-c \) -print -delete
+find package/feeds -maxdepth 3 \
+  \( -name hysteria -o -name shadowsocks-libev -o -name shadowsocks-c \) -print -delete
 ```
+
+> 注意 `hysteria` 和 `hysteria2` 是两个不同的包（v1 / v2），`hysteria2` 不用动。
+> `openwrt/packages` 官方 feed 在 24.10 里已经没有 `shadowsocks-libev` 了，所以通常只会命中 passwall 那一个。
 
 ### 3. clone 到 package/ 下
 
@@ -82,9 +97,15 @@ git -C package/passwall-legacy-packages pull
 
 ## 注意：重跑 feeds install 会把软链建回来
 
-第 2 步的删除是**一次性**的。以后只要再跑 `./scripts/feeds install -a`（比如 `feeds update -a` 之后），`package/feeds/*/hysteria` 和 `shadowsocks-c` 会被重新创建，包名冲突再次出现。
+第 2 步的删除是**一次性**的。以后只要再跑 `./scripts/feeds install -a`（比如 `feeds update -a` 之后），`package/feeds/*/hysteria` 和 ss 那个目录会被重新创建，包名冲突再次出现。
 
-重跑过 feeds 命令，就把第 2 步再执行一遍。
+重跑过 feeds 命令，就把第 2 步再执行一遍。可以直接存成脚本：
+
+```sh
+#!/bin/sh
+find package/feeds -maxdepth 3 \
+  \( -name hysteria -o -name shadowsocks-libev -o -name shadowsocks-c \) -print -delete
+```
 
 ---
 
@@ -157,6 +178,6 @@ src-git passwall_legacy https://github.com/M4TRIX04/passwall-legacy-packages.git
 ## 已知限制
 
 - hysteria v1 已停止维护，协议与 v2 不互通，只在服务端仍是 v1 时有意义。
-- `hysteria` 包名与 hysteria v2 相同，**装到路由器上时两者不能共存**。
+- `hysteria`（v1，装到 `/usr/bin/hysteria`）和 `hysteria2`（v2，装到 `/usr/bin/hysteria2`）是两个独立的包，包名和二进制名都不冲突，可以同时装，PassWall 里对应不同的节点类型。
 - shadowsocks-c 锁的是 master commit 而非 tag，上游若 rebase / 强推需要重新确认 `PKG_SOURCE_VERSION`。
 - 产物未签名。
